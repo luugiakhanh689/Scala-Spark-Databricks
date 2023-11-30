@@ -5,7 +5,9 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.col
 import org.apache.spark.sql.types.{IntegerType, DoubleType, BooleanType, DateType}
 import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.types.MetadataBuilder
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -25,41 +27,128 @@ object Main {
 
       val spark = SparkSession.builder().getOrCreate()
 
+      val expectedSchema = StructType(
+        Seq(
+          StructField("PersonName", StringType, nullable = true),
+          StructField("Country", StringType, nullable = true),
+          StructField("Discipline", StringType, nullable = true),
+        )
+      )
+
       var athletes = spark.read
-        .format("csv")
+        .format("parquet")
         .option("header", "true")
         .option("inferSchema", "true")
-        .load("/mnt/tokyo-olympic-data/raw-data/athletes.csv")
+        .load("/mnt/tokyo-olympic-data/level2/athletes.parquet")
 
       var coaches = spark.read
-        .format("csv")
+        .format("parquet")
         .option("header", "true")
         .option("inferSchema", "true")
-        .load("/mnt/tokyo-olympic-data/raw-data/coaches.csv")
+        .load("/mnt/tokyo-olympic-data/level2/coaches.parquet")
 
       var entriesgender = spark.read
-        .format("csv")
+        .format("parquet")
         .option("header", "true")
         .option("inferSchema", "true")
-        .load("/mnt/tokyo-olympic-data/raw-data/entriesgender.csv")
+        .load("/mnt/tokyo-olympic-data/level2/entriesgender.parquet")
 
       var medals = spark.read
-        .format("csv")
+        .format("parquet")
         .option("header", "true")
         .option("inferSchema", "true")
-        .load("/mnt/tokyo-olympic-data/raw-data/medals.csv")
+        .load("/mnt/tokyo-olympic-data/level2/medals.parquet")
 
       var teams = spark.read
-        .format("csv")
+        .format("parquet")
         .option("header", "true")
         .option("inferSchema", "true")
-        .load("/mnt/tokyo-olympic-data/raw-data/teams.csv")
+        .load("/mnt/tokyo-olympic-data/level2/teams.parquet")
+
+      val realSchema = athletes.schema
+
+      // Validate column names
+      val expectedColumnNames = expectedSchema.map(_.name).toSet
+      val actualColumnNames = realSchema.map(_.name).toSet
+      val columnNamesMatch = expectedColumnNames == actualColumnNames
+
+      // Validate data types for each column
+      val columnTypeMatches = expectedSchema.forall { expectedField =>
+        val realField = realSchema.find(_.name == expectedField.name)
+        realField match {
+          case Some(field) => field.dataType == expectedField.dataType
+          case None => false
+        }
+      }
+
+      // Check if all column names and types match the expected schema
+      val schemaValid = columnNamesMatch && columnTypeMatches
+
+      println(expectedSchema)
+      println(realSchema)
+      println(s"Expected Column Names: ${expectedColumnNames}")
+      println(s"Actual Column Names: ${actualColumnNames}")
+      println(s"Column Names Match: ${columnNamesMatch}")
+      println(s"Column Type Match: ${columnTypeMatches}")
+
+      if (schemaValid) {
+        println("The schemas match!")
+      } else {
+        println("The schemas do not match.")
+        if (!columnNamesMatch) {
+          println("Column names are different:")
+          val missingColumns = expectedColumnNames -- actualColumnNames
+          val extraColumns = actualColumnNames -- expectedColumnNames
+          if (missingColumns.nonEmpty) {
+            println(s"Missing columns: ${missingColumns.mkString(", ")}")
+          }
+          if (extraColumns.nonEmpty) {
+            println(s"Extra columns: ${extraColumns.mkString(", ")}")
+          }
+        }
+        if (!columnTypeMatches) {
+          println("Column data types are different:")
+          expectedSchema.foreach { expectedField =>
+            val realField = realSchema.find(_.name == expectedField.name)
+            realField match {
+              case Some(field) =>
+                if (field.dataType != expectedField.dataType) {
+                  println(s"Column '${expectedField.name}' has an unexpected data type. Expected: ${expectedField.dataType}, Actual: ${field.dataType}")
+                }
+              case None =>
+                println(s"Column '${expectedField.name}' is missing in the actual schema.")
+            }
+          }
+        }
+      }
 
       athletes.show()
       coaches.show()
       entriesgender.show()
       medals.show()
       teams.show()
+
+      val renamedData = teams.withColumnRenamed("TeamName", "Team_Name_CC")
+      println("Successfully renamed the TeamName column to Team_Name_CC.")
+      renamedData.show()
+
+      // Define the metadata with the tag
+      val metadata = new MetadataBuilder().putString("tag", "this column has been modified").build()
+
+      val dataWithMetadata = renamedData.withColumn(
+        "Team_Name_CC",
+        col("Team_Name_CC").as("Team_Name_CC", metadata)
+      )
+
+      // Show the DataFrame with metadata added to the column
+      dataWithMetadata.show()
+
+      // Remove duplicate rows
+      val dfWithoutDuplicates = renamedData.dropDuplicates()
+
+      // Show the DataFrame without duplicates
+      println("DataFrame after removing duplicates:")
+      dfWithoutDuplicates.show()
 
       println("Athletes Schema:")
       athletes.printSchema()
@@ -71,6 +160,7 @@ object Main {
       teams.printSchema()
       println("Entries Gender Schema:")
       entriesgender.printSchema()
+      entriesgender.show()
 
       entriesgender
         .withColumn("Female", col("Female").cast(IntegerType))
@@ -78,51 +168,45 @@ object Main {
         .withColumn("Total", col("Total").cast(IntegerType))
 
       println("Entries Gender Schema after modification:")
-      entriesgender.printSchema()
-
-      val topGoldMedalCountries: DataFrame = medals.orderBy(col("Gold").desc).select("Team_Country", "Gold")
-      topGoldMedalCountries.show()
 
       val averageEntriesByGender = entriesgender
         .withColumn("Avg_Female", col("Female") / col("Total"))
         .withColumn("Avg_Male", col("Male") / col("Total"))
+      averageEntriesByGender.printSchema()
       averageEntriesByGender.show()
+
+      val topGoldMedalCountries: DataFrame = medals.orderBy(col("Gold").desc).select("Team_Country", "Gold")
+      topGoldMedalCountries.show()
 
       athletes.repartition(1)
         .write
         .mode("overwrite")
         .option("header", "true")
-        .csv("/mnt/tokyo-olympic-data/transformed-data/athletes")
+        .parquet("/mnt/tokyo-olympic-data/level3/athletes")
 
       coaches.repartition(1)
         .write
         .mode("overwrite")
         .option("header", "true")
-        .csv("/mnt/tokyo-olympic-data/transformed-data/coaches")
+        .parquet("/mnt/tokyo-olympic-data/level3/coaches")
 
       medals.repartition(1)
         .write
         .mode("overwrite")
         .option("header", "true")
-        .csv("/mnt/tokyo-olympic-data/transformed-data/medals")
+        .parquet("/mnt/tokyo-olympic-data/level3/medals")
 
       teams.repartition(1)
         .write
         .mode("overwrite")
         .option("header", "true")
-        .csv("/mnt/tokyo-olympic-data/transformed-data/teams")
-
-      topGoldMedalCountries.repartition(1)
-        .write
-        .mode("overwrite")
-        .option("header", "true")
-        .csv("/mnt/tokyo-olympic-data/transformed-data/topGoldMedalCountries")
+        .parquet("/mnt/tokyo-olympic-data/level3/teams")
 
       averageEntriesByGender.repartition(1)
         .write
         .mode("overwrite")
         .option("header", "true")
-        .csv("/mnt/tokyo-olympic-data/transformed-data/averageEntriesByGender")
+        .parquet("/mnt/tokyo-olympic-data/level3/entriesgender")
 
       println("The data has been successfully transformed.")
     } catch {
