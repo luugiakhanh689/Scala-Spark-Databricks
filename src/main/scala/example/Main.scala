@@ -3,11 +3,12 @@ package example
 import com.databricks.dbutils_v1.DBUtilsHolder.dbutils
 import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.functions.col
-import org.apache.spark.sql.types.{IntegerType, DoubleType, BooleanType, DateType}
+import org.apache.spark.sql.types.{BooleanType, DateType, DoubleType, IntegerType}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.types.MetadataBuilder
+import org.apache.spark.SparkContext
 
 object Main {
   def main(args: Array[String]): Unit = {
@@ -209,6 +210,36 @@ object Main {
         .parquet("/mnt/tokyo-olympic-data/level3/entriesgender")
 
       println("The data has been successfully transformed.")
+
+      val newContainerName = "level3";
+      val storageAccountName = "tokyoolympicdatademo"
+      val storageAccountAccessKey = "+3a/koyWQNpG/FoEHSIyobrzjvI5CqTSBP0NsRvOT+pqyrIdRy2d3yJn7ywfUDO8fKnGPzK1sn74+ASt9bDmcg=="
+      val tempDirPath = "datawarehouse"
+
+      println("Starting - Transform to Data Warehouse")
+      val sc = SparkContext.getOrCreate()
+      sc.hadoopConfiguration.set(s"fs.azure.account.key.$storageAccountName.dfs.core.windows.net", storageAccountAccessKey)
+      spark.conf.set("spark.sql.parquet.writeLegacyFormat", "true")
+      val tempDir = s"abfss://$newContainerName@$storageAccountName.dfs.core.windows.net/$tempDirPath"
+
+      def transformToDWTable(dataFrame: DataFrame, tempDir: String, dwDatabase: String,
+                             dwServer: String, dwUser: String, dwPass: String): Unit = {
+        val dwJdbcPort = "1433"
+        val sqlDWUrlFooter = "encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.sql.azuresynapse.net;loginTimeout=30;"
+        val sqlDwUrl = s"jdbc:sqlserver://$dwServer:$dwJdbcPort;database=$dwDatabase;user=$dwUser;password=$dwPass;$sqlDWUrlFooter"
+        dataFrame.write
+          .format("com.databricks.spark.sqldw")
+          .option("url", sqlDwUrl)
+          .option("dbTable", "OlympicCreatedTable")
+          .option("forwardSparkAzureStorageCredentials", "true")
+          .option("tempDir", tempDir)
+          .mode("overwrite")
+          .save()
+      }
+
+      transformToDWTable(athletes, tempDir, "olympicdata", "data-sa.sql.azuresynapse.net", "sqladminuser", "123456x@X")
+
+      println("Ending - Transform to Data Warehouse")
     } catch {
       case e: Throwable =>
         println(s"An error occurred during mounting: ${e.getMessage}")
@@ -221,6 +252,9 @@ object Main {
           println(s"Error occurred during unmounting: ${unmountError.getMessage}")
       }
       println("Execution completed.")
+
+
+
     }
   }
 }
