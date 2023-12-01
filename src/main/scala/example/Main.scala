@@ -211,33 +211,54 @@ object Main {
 
       println("The data has been successfully transformed.")
 
-      val newContainerName = "level3";
-      val storageAccountName = "tokyoolympicdatademo"
-      val storageAccountAccessKey = "+3a/koyWQNpG/FoEHSIyobrzjvI5CqTSBP0NsRvOT+pqyrIdRy2d3yJn7ywfUDO8fKnGPzK1sn74+ASt9bDmcg=="
-      val tempDirPath = "datawarehouse"
+      def getKeyVaultSecret(keyName: String): String = {
+        val scopeName = "testScope"
+        dbutils.secrets.get(scope = scopeName, key = keyName)
+      }
 
-      println("Starting - Transform to Data Warehouse")
-      val sc = SparkContext.getOrCreate()
-      sc.hadoopConfiguration.set(s"fs.azure.account.key.$storageAccountName.dfs.core.windows.net", storageAccountAccessKey)
-      spark.conf.set("spark.sql.parquet.writeLegacyFormat", "true")
-      val tempDir = s"abfss://$newContainerName@$storageAccountName.dfs.core.windows.net/$tempDirPath"
+       def writeDataToDataWarehouse(dataFrame: DataFrame, tableName: String): Unit = {
 
-      def transformToDWTable(dataFrame: DataFrame, tempDir: String, dwDatabase: String,
-                             dwServer: String, dwUser: String, dwPass: String): Unit = {
-        val dwJdbcPort = "1433"
-        val sqlDWUrlFooter = "encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.sql.azuresynapse.net;loginTimeout=30;"
-        val sqlDwUrl = s"jdbc:sqlserver://$dwServer:$dwJdbcPort;database=$dwDatabase;user=$dwUser;password=$dwPass;$sqlDWUrlFooter"
+        val sc = SparkContext.getOrCreate()
+        val storageAccessKey = getKeyVaultSecret("storageAccessKey")
+        val sqlUserName = getKeyVaultSecret("sqlUserName")
+        val sqlPassword = getKeyVaultSecret("sqlPassword")
+         val dedicatedSQLEndpoint = "tokyo-olympic-data-sa.sql.azuresynapse.net"
+         val storageAccountName = "tokyoolympicdatademo"
+         val  containerStorageAccount = "tokyo-olympic-data"
+         val fileSystemPath = "level3/athletes"
+         val dwDatabase = "olympicdata"
+
+        sc.hadoopConfiguration.set(s"fs.azure.account.key.$storageAccountName.dfs.core.windows.net", storageAccessKey)
+
+        val sqlDwUrl = s"jdbc:sqlserver://$dedicatedSQLEndpoint:1433;database=$dwDatabase;user=$sqlUserName;password=$sqlPassword;encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.sql.azuresynapse.net;loginTimeout=30;"
+        val tempDir = s"abfss://$containerStorageAccount@$storageAccountName.dfs.core.windows.net/$fileSystemPath"
+
         dataFrame.write
           .format("com.databricks.spark.sqldw")
           .option("url", sqlDwUrl)
-          .option("dbTable", "OlympicCreatedTable")
           .option("forwardSparkAzureStorageCredentials", "true")
+          .option("dbTable", tableName)
           .option("tempDir", tempDir)
           .mode("overwrite")
           .save()
       }
 
-      transformToDWTable(athletes, tempDir, "olympicdata", "data-sa.sql.azuresynapse.net", "sqladminuser", "123456x@X")
+      //Write transformed data to Data Warehouse
+      println("Start write transformed data to Data Warehouse -----------------------------------")
+      writeDataToDataWarehouse(athletes,"athletes")
+      println("Created athletes table! -----------------------------------")
+
+      writeDataToDataWarehouse(coaches, "coaches")
+      println("Created coaches table! -----------------------------------")
+
+      writeDataToDataWarehouse(renamedMedalData, "medals")
+      println("Created medals table! -----------------------------------")
+
+      writeDataToDataWarehouse(teams, "teams")
+      println("Created teams table! -----------------------------------")
+
+      writeDataToDataWarehouse(averageEntriesByGender, "entriesgender")
+      println("Created entriesgender table! -----------------------------------")
 
       println("Ending - Transform to Data Warehouse")
     } catch {
