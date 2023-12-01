@@ -125,26 +125,26 @@ object Main {
       athletes.show()
       coaches.show()
       entriesgender.show()
-      medals.show()
       teams.show()
+      medals.show()
 
-      val renamedData = teams.withColumnRenamed("TeamName", "Team_Name_CC")
-      println("Successfully renamed the TeamName column to Team_Name_CC.")
-      renamedData.show()
-
+      val renamedMedalData = medals.withColumnRenamed("Rank by Total", "Rank_by_Total")
+      println("Successfully renamed the Rank by  column to Rank_by_Total.")
+      renamedMedalData.show()
       // Define the metadata with the tag
       val metadata = new MetadataBuilder().putString("tag", "this column has been modified").build()
 
-      val dataWithMetadata = renamedData.withColumn(
-        "Team_Name_CC",
-        col("Team_Name_CC").as("Team_Name_CC", metadata)
+      // Add metadata to the column "c_mod"
+      val dataWithMetadata = renamedMedalData.withColumn(
+        "Rank_by_Total",
+        col("Rank_by_Total").as("Rank_by_Total", metadata)
       )
 
       // Show the DataFrame with metadata added to the column
       dataWithMetadata.show()
 
       // Remove duplicate rows
-      val dfWithoutDuplicates = renamedData.dropDuplicates()
+      val dfWithoutDuplicates = renamedMedalData.dropDuplicates()
 
       // Show the DataFrame without duplicates
       println("DataFrame after removing duplicates:")
@@ -190,7 +190,7 @@ object Main {
         .option("header", "true")
         .parquet("/mnt/tokyo-olympic-data/level3/coaches")
 
-      medals.repartition(1)
+      renamedMedalData.repartition(1)
         .write
         .mode("overwrite")
         .option("header", "true")
